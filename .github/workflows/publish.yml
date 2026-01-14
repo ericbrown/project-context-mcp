@@ -1,4 +1,4 @@
-name: Release
+name: Publish to PyPI
 
 on:
   push:
@@ -6,19 +6,17 @@ on:
       - main
 
 jobs:
-  release:
+  publish:
     runs-on: ubuntu-latest
-    concurrency: release
     permissions:
-      contents: write  # For creating commits and tags
-      id-token: write  # For PyPI trusted publishing
+      contents: write
+      id-token: write
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -28,41 +26,46 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install python-semantic-release build
+          pip install build
 
-      - name: Configure git
+      - name: Get version from pyproject.toml
+        id: get_version
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          VERSION=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION"
 
-      - name: Run Semantic Release
-        id: release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Check if tag exists
+        id: check_tag
         run: |
-          semantic-release version --no-push --no-commit --print > new_version.txt || true
-          NEW_VERSION=$(cat new_version.txt)
-          if [ -n "$NEW_VERSION" ]; then
-            echo "new_release=true" >> $GITHUB_OUTPUT
-            echo "version=$NEW_VERSION" >> $GITHUB_OUTPUT
-            echo "New version will be: $NEW_VERSION"
-            semantic-release version
+          if git rev-parse "v${{ steps.get_version.outputs.version }}" >/dev/null 2>&1; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "Tag v${{ steps.get_version.outputs.version }} already exists, skipping publish"
           else
-            echo "new_release=false" >> $GITHUB_OUTPUT
-            echo "No release needed"
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "Tag v${{ steps.get_version.outputs.version }} does not exist, will publish"
           fi
 
       - name: Build package
-        if: steps.release.outputs.new_release == 'true'
+        if: steps.check_tag.outputs.exists == 'false'
         run: python -m build
 
       - name: Publish to PyPI
-        if: steps.release.outputs.new_release == 'true'
+        if: steps.check_tag.outputs.exists == 'false'
         uses: pypa/gh-action-pypi-publish@release/v1
 
-      - name: Create GitHub Release
-        if: steps.release.outputs.new_release == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create git tag
+        if: steps.check_tag.outputs.exists == 'false'
         run: |
-          semantic-release publish
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "v${{ steps.get_version.outputs.version }}" -m "Release v${{ steps.get_version.outputs.version }}"
+          git push origin "v${{ steps.get_version.outputs.version }}"
+
+      - name: Create GitHub Release
+        if: steps.check_tag.outputs.exists == 'false'
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ steps.get_version.outputs.version }}
+          name: Release v${{ steps.get_version.outputs.version }}
+          generate_release_notes: true
