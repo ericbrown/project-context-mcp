@@ -1,6 +1,6 @@
 [project]
 name = "project-context-mcp"
-version = "0.1.0"
+version = "1.0.1"
 description = "MCP server that exposes .context/ folder files as resources in Claude Code"
 readme = "README.md"
 license = {text = "MIT"}
